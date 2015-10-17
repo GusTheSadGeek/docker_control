@@ -1,0 +1,42 @@
+#!/bin/bash
+
+IMAGE=det_postgresql
+CONTAINER=postgresqlserver
+HOSTPORT=5432
+GUESTPORT=5432
+
+PORTFWD="-p ${HOSTPORT}:${GUESTPORT}"
+
+
+case $1 in
+
+start)
+  docker run  -d  --name="${CONTAINER}" -t docker.blinkboxmusic.com/blinkboxmusic/${IMAGE}
+  ;;
+stop)
+  docker ps --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop
+  docker ps -a --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+restart)
+  docker ps --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop
+  docker ps -a --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  docker run -d  --name="${CONTAINER}" -t docker.blinkboxmusic.com/blinkboxmusic/${IMAGE}
+  ;;
+create)
+  docker build -t docker.blinkboxmusic.com/blinkboxmusic/${IMAGE} .
+  ;;
+push)
+  docker push docker.blinkboxmusic.com/blinkboxmusic/${IMAGE}
+  ;;
+*)
+  echo "Usage:  ./dock <option>"
+  echo "start     - start a container running - ONLY IF YOU WANT AN EMPTY SQL SERVER"
+  echo "stop      - stop and remove a running container"
+  echo "create    - create a docker container image"
+  echo "push      - push a docker container image to the registry THINK CAREFULLY!!"
+  ;;
+esac
+
+exit 0
+
+

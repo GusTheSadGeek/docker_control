@@ -1,0 +1,71 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic"
+
+IMAGE=testdb
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+CONTAINER="testdbserver${CONTAINER_SUFFIX}"
+
+HOSTPORT=$((5432 + $PORTOFFSET))
+GUESTPORT=$((5432))
+
+case $1 in
+
+start)
+  if [ "$NOPULL" != "1" ] ; then
+    docker pull ${REPO}/${IMAGE}
+  fi
+  docker run -p ${HOSTPORT}:${GUESTPORT} -d  --name="${CONTAINER}" --restart=always -t ${REPO}/${IMAGE}
+  ;;
+  
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+  
+restart)
+  docker ps --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop
+  docker ps -a --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  docker run -p ${HOSTPORT}:${GUESTPORT} -d  --name="${CONTAINER}" -t ${REPO}/${IMAGE}
+  ;;
+  
+create)
+  mkdir -p artifacts
+  cd artifacts 
+  wget http://vagrantdata.we7.local/testdb/latest_bin.tar.gz
+  tar -xf latest_bin.tar.gz
+  find . -name "*rec.sql_bin" -print0 | xargs -0 -I file mv file latest_rec.sqlbin
+  find . -name "*.sql_bin" -print0 | xargs -0 -I file mv file latest.sqlbin
+  cd ..
+  docker build -t ${REPO}/${IMAGE} .
+  rm -f artifacts/*
+  ;;
+  
+push)
+  docker push ${REPO}/${IMAGE}
+  ;;
+  
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+  
+*)
+  echo "Usage:  ./dock <option>"
+  echo "start     - start a container running"
+  echo "stop      - stop and remove a running container"
+  echo "create    - create a docker container image"
+  echo "push      - push a docker container image to the registry THINK CAREFULLY!!"
+  ;;
+esac
+
+exit 0
+

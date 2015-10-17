@@ -1,0 +1,37 @@
+#
+# To create a fresh docker image run this command
+# docker build -t docker.blinkboxmusic.com/blinkboxmusic/blah .
+# # Dont forget the dot at the end !
+#
+# To push the image to the we7 registry....
+# docker push docker.blinkboxmusic.com/blinkboxmusic/blah
+#
+# YOU DO NOT HAVE TO DO THE ABOVE UNLESS THE registry image needs updating
+#
+FROM docker.blinkboxmusic.com/blinkboxmusic/debian_java8
+MAINTAINER Gus Robinson  <gus@blinkbox.com>
+
+ADD artifacts/api.deb /api.deb
+
+RUN apt-get -yqq install maxmind-db
+RUN dpkg -i api.deb
+
+#RUN apt-get install -qqy bbm-core-api
+
+COPY ./files/start-api.sh start-api.sh
+COPY ./files/mediagraft-log4j.xml /etc/bbm/mediagraft-log4j.xml
+COPY ./files/mediagraft-tomcat.yml /etc/bbm/mediagraft-tomcat.yml
+COPY ./files/solrcfg /solrcfg
+COPY ./artifacts/tomcat_keystore /tomcat_keystore
+
+RUN chmod +x start-api.sh && \
+    chown -R bbm-core-api /var/lib/bbm-core-api/logs && \
+    mkdir -p /var/log/bbm-core-api && \
+    chown -R bbm-core-api /var/log/bbm-core-api
+
+CMD ["./startapi.sh"]
+
+# No point in exposing ports here as the ports will probably change when the container is started.
+#EXPOSE 8080
+#EXPOSE 8443
+

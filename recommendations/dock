@@ -1,0 +1,119 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+TAG="prod"
+
+if [[ $3 != "" ]] ; then
+  TAG=$3
+else
+  TAG="prod"
+fi
+
+PORTOFFSET=0
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+CONTAINER="recomendationsserver${CONTAINER_SUFFIX}"
+
+IMAGE=debian_recommendations
+
+HOSTNAME=${MY_HOST_NAME}
+if [ "$HOSTNAME" == "" ] ; then
+  HOSTNAME=`hostname -f`
+fi
+
+PSQLPORT=$((5432 + $PORTOFFSET))
+APIPORT=$((8080 + $PORTOFFSET))
+APISECPORT=$((8443 + $PORTOFFSET))
+PORT_MEMCACHED=$((11812 + $PORTOFFSET))
+  
+MEMCACHE_HOST="${HOSTNAME}:${PORT_MEMCACHED}"
+
+PORT=$((2082 + $PORTOFFSET))
+
+FWD="-p ${PORT}:82"      # REC always used port 82 
+
+LINK=""
+
+CMD="/start-recommendations.sh ${HOSTNAME} ${PSQLPORT} ${HOSTNAME} ${APIPORT} ${APISECPORT} ${MEMCACHE_HOST}"
+
+case $1 in
+
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+
+start)
+  if [ "$NOPULL" != "1" ] ; then
+    docker pull ${REPO}/${IMAGE}:${TAG}
+  fi
+  docker run ${FWD} --name="${CONTAINER}"  --restart=always -d -t ${REPO}/${IMAGE}:${TAG} ${CMD}
+  ;;
+
+start-bash)
+  docker run --rm -i ${FWD} ${LINK} -v ${currentpath}/recommendations:/recommendations --name="${CONTAINER}" -t ${REPO}/${IMAGE}:${TAG} bash
+  ;;
+
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+
+create)
+## This container needs to be run to finish creation so create a temp image, run it then create a image from temp container
+if [[ 1 == 0 ]] ; then
+  TEMPIMAGE="rec_temp"
+  docker build -t ${TEMPIMAGE} .
+  docker run ${FWD} --name="${CONTAINER}" ${LINK} -d -t ${TEMPIMAGE} ${CMD} 1
+
+# Log the output of the running container - the container will stop when completed
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs -f
+
+# Commit the running container to an image with the proper name
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r -I {} docker commit {} ${REPO}/${IMAGE}:${TAG}
+
+# remove the temp container  
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+
+# remove the temp image
+  docker rmi ${TEMPIMAGE}
+else
+  docker build --no-cache -t ${REPO}/${IMAGE}:${TAG} .
+fi
+  ;;
+
+push)
+  docker push ${REPO}/${IMAGE}:${TAG}
+  ;;
+
+logs)
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs $2
+  ;;
+
+*)
+  echo "REC container"
+  echo "============="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create [f]           - create recommendations image (f - to force rebuild)"
+  echo "."
+  echo "start [port offset]  - start a container running"
+  echo "stop                 - stop and remove a running container"
+  echo "attach               - attach a bash prompt to running container"
+  echo "logs  [-f]           - display the log"
+  echo "."
+  echo "start-bash           - start a container running with bash prompt - DEBUG ONLY"
+  ;;
+esac
+
+exit 0
+

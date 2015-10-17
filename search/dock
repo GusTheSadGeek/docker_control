@@ -1,0 +1,77 @@
+#!/bin/bash
+
+IMAGE=search
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+  CONTAINER_SUFFIX="_${PORTOFFSET}"
+fi
+
+CONTAINER="searchserver${CONTAINER_SUFFIX}"
+
+case $1 in
+
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+
+start)
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+
+  DBHOSTNAME=${HOSTNAME}
+  RECHOSTNAME=${HOSTNAME}
+
+  PORT_UNSEC=$((8080 + $PORTOFFSET))
+  PORT_SEC=$((8443 + $PORTOFFSET))
+  PORT_REC=$((2082 + $PORTOFFSET))
+  PORT_DB=$((5432 + $PORTOFFSET))
+
+
+
+  FWD="-p 8980:8980"
+
+  docker run ${FWD} -d --name="${CONTAINER}" -d docker.blinkboxmusic.com/blinkboxmusic/${IMAGE}
+  ;;
+
+start-bash)
+  docker run --rm -i  --name="${CONTAINER}" -t docker.blinkboxmusic.com/blinkboxmusic/${IMAGE} bash
+  ;;
+
+
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+create)
+  docker build -t docker.blinkboxmusic.com/blinkboxmusic/${IMAGE} .
+  ;;
+
+logs)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs $2
+  ;;
+
+*)
+  echo "API container"
+  echo "============="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create               - create the container"
+  echo "."
+  echo "start [port offset]  - start a container running"
+  echo "stop                 - stop and remove a running container"
+  echo "attach               - attach a bash prompt to running container"
+  echo "logs [-f]            - display the log"
+  echo "."
+  echo "start-bash           - start a container running with bash prompt - DEBUG ONLY"
+  ;;
+esac
+
+exit 0
+

@@ -1,0 +1,15 @@
+http:
+  port: @http@
+  connectionTimeout: 5000
+  disableUploadTimeout: false
+https:
+  port: @https@
+  scheme: https
+  secure: true
+  ssl: true
+  connectionTimeout: 5000
+  disableUploadTimeout: false
+  keystore: /usr/share/bbm-radio-site/tomcat_keystore
+shutdown:
+  port: @shutdown@
+  password: shutdown

@@ -1,0 +1,7 @@
+deb http://ftp.uk.debian.org/debian wheezy main
+deb http://ftp.uk.debian.org/debian wheezy-updates main
+deb http://ftp.uk.debian.org/debian wheezy-backports main
+deb http://jenkins.we7.local/qa/debian wheezy/
+#deb http://testing-cluster:FTx1koUQ@packages.mediagraft.com/qa/debian wheezy/
+deb http://testing-cluster:FTx1koUQ@packages.mediagraft.com/repo wheezy/stable main contrib non-free
+deb http://security.debian.org wheezy/updates main

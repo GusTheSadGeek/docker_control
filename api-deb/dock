@@ -1,0 +1,172 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+TAG="prod"
+IMAGE=api_deb
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+CONTAINER="apiserver${CONTAINER_SUFFIX}"
+
+case $1 in
+
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+
+start)
+  if [[ $3 != "" ]] ; then
+    TAG=$3
+  else
+    TAG=`cat artifacts/lasttag.txt`
+  fi
+    
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+  
+  rm -rf artifacts
+  mkdir -p artifacts
+  if [ "${MY_HOST_KEYSTORE}" == "" ] ; then
+    cp files/tomcat_keystore artifacts/tomcat_keystore
+  else
+    cp ${MY_HOST_KEYSTORE} artifacts/tomcat_keystore
+  fi  
+
+  DBHOSTNAME=${HOSTNAME}
+  RECHOSTNAME=${HOSTNAME}
+
+  API_HOST=${HOSTNAME}
+  HOST_DB=${HOSTNAME}
+  HOST_REC=${HOSTNAME}
+  HOST_SOLR=${HOSTNAME}
+  HOST_MEMCACHED=${HOSTNAME}
+
+  PORT_UNSEC=$((8080 + $PORTOFFSET))
+  PORT_SEC=$((8443 + $PORTOFFSET))
+  PORT_REC=$((2082 + $PORTOFFSET))
+  PORT_DB=$((5432 + $PORTOFFSET))
+  PORT_MEMCACHED=$((11212 + $PORTOFFSET))
+  
+  PORT_SOLR=$((8880 + $PORTOFFSET))
+
+  FWD_UNSEC="-p ${PORT_UNSEC}:${PORT_UNSEC}"
+  FWD_SEC="-p ${PORT_SEC}:${PORT_SEC}"
+  LINK=""
+
+  ENV=""
+#  ENV="${ENV} -e HA_API_PORT=$PORT_UNSEC"
+#  ENV="${ENV} -e HA_API_SEC_PORT=$PORT_SEC"
+  ENV="${ENV} -e API_HOST=$API_HOST"
+  ENV="${ENV} -e API_PORT=$PORT_UNSEC"
+  ENV="${ENV} -e API_SEC_PORT=$PORT_SEC"
+  ENV="${ENV} -e REC_PORT=$PORT_REC"
+  ENV="${ENV} -e REC_HOST=$HOST_REC"
+  ENV="${ENV} -e DB_PORT=$PORT_DB"
+  ENV="${ENV} -e DB_HOST=$HOST_DB"
+  ENV="${ENV} -e SOLR_PORT=$PORT_SOLR"
+  ENV="${ENV} -e SOLR_HOST=$HOST_SOLR"
+  ENV="${ENV} -e MEMCACHE_PORT=$PORT_MEMCACHED"
+  ENV="${ENV} -e MEMCACHE_HOST=$HOST_MEMCACHED"
+
+  if [ "$NOPULL" != "1" ] ; then
+    if [[ "$TAG" == "prod" ]] ; then
+      docker pull ${REPO}/${IMAGE}:${TAG}
+    fi
+  fi
+  
+  docker run ${ENV} ${FWD_SEC} ${FWD_UNSEC} -v ${currentpath}/artifacts:/artifacts -i --name="${CONTAINER}" ${LINK} -d ${REPO}/${IMAGE}:${TAG} /start-api.sh
+  ;;
+
+start-bash)
+  docker run ${ENV} --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE}:${TAG} bash
+  ;;
+
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+push)
+  if [[ $2 != "" ]] ; then
+    TAG=$2
+  else
+    TAG=`cat artifacts/lasttag.txt`
+  fi  
+  docker push ${REPO}/${IMAGE}:${TAG}
+  ;;
+
+create-prod)
+  TAG="prod"
+  rm -rf artifacts
+  mkdir -p artifacts
+  if [ "${MY_HOST_KEYSTORE}" == "" ] ; then
+    cp files/tomcat_keystore artifacts/tomcat_keystore
+  else
+    cp ${MY_HOST_KEYSTORE} artifacts/tomcat_keystore
+  fi
+
+  docker build --no-cache -f ./Dockerfile_prod -t ${REPO}/${IMAGE}:${TAG} .
+  rc=$?
+  if [[ $rc == 0 ]] ; then
+    echo "$TAG" > artifacts/lasttag.txt
+  else
+    echo "FAILED TO CREATE CONTAINER IMAGE"
+    exit 1
+  fi
+  ;;
+
+create-deb)
+  TAG="custom"
+  DEB_FILE=$2
+  rm -rf artifacts
+  mkdir -p artifacts
+
+  cp $DEB_FILE artifacts/api.deb
+  
+  if [ "${MY_HOST_KEYSTORE}" == "" ] ; then
+    cp files/tomcat_keystore artifacts/tomcat_keystore
+  else
+    cp ${MY_HOST_KEYSTORE} artifacts/tomcat_keystore
+  fi
+  
+  docker build --no-cache -f ./Dockerfile_deb -t ${REPO}/${IMAGE}:${TAG} .
+  rc=$?
+  if [[ $rc == 0 ]] ; then
+    echo "$TAG" > artifacts/lasttag.txt
+  else
+    echo "FAILED TO CREATE CONTAINER IMAGE"
+    exit 1
+  fi
+  ;;
+
+
+logs)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -I {} -r  docker logs ${3}  {}
+  ;;
+
+*)
+  echo "API container"
+  echo "============="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create-prod          - create the container"
+  echo "create-deb           - create the container"
+  echo "."
+  echo "start [port offset]  - start a container running"
+  echo "stop                 - stop and remove a running container"
+  echo "attach               - attach a bash prompt to running container"
+  echo "logs [-f]            - display the log"
+  echo "."
+  echo "start-bash           - start a container running with bash prompt - DEBUG ONLY"
+  ;;
+esac

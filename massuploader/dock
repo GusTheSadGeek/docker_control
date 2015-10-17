@@ -1,0 +1,64 @@
+#!/bin/bash
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic/test"
+
+IMAGE=debian_java8
+CONTAINER=massuploadbuilder
+
+case $1 in
+
+start)
+  docker run --rm -i  --name="${CONTAINER}" -t docker.blinkboxmusic.com/blinkboxmusic/${IMAGE} bash
+  ;;
+
+stop)
+  docker ps --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop
+  docker ps -a --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+create)
+#  if  [ -e mass-upload-client ]; then
+#    cd mass-upload-client
+#    git fetch origin && git pull origin master
+#    cd ..
+#  else
+#    git clone --depth=1 --branch=master git@github.com:we7/mass-upload-client
+#  fi
+
+  rm -rf mass-upload-client
+  git clone git@github.com:we7/mass-upload-client
+  cd mass-upload-client
+  git checkout a5cfc92a1250e0c043010a78401bc17eade13200 -b wibble
+  cd ..
+
+  rm -f mass-upload-client/build/libs/*
+  rm -f mass-upload-client*.jar
+  
+  # Put file permissions back to current user as docker leaves them owned by root.
+  CHOWNCMD="chown -R `id -u`:`id -g` /mass-upload-client"
+#  echo $CHOWNCMD
+
+  BASHCMD='bash -c "apt-get install -qqy git && cd /mass-upload-client && GRADLE_OPTS=-Dorg.gradle.native=false ./gradlew jar && ${CHOWNCMD}"'
+  currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+  DKCMD="run --rm -v ${currentpath}/mass-upload-client:/mass-upload-client --name=\"${CONTAINER}\" -t docker.blinkboxmusic.com/blinkboxmusic/${IMAGE}"
+  FULLCMD="docker ${DKCMD} ${BASHCMD}"
+  eval "${FULLCMD}"
+  
+  cp mass-upload-client/build/libs/mass-upload-client*.jar .
+  ;;
+
+*)
+  echo "Mass-upload-client builder - using a docker container"
+  echo "====================================================="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create    - checkout mass-upload-client and use container to build it"
+  echo "."
+  echo "start     - start a container running with BASH prompt - ONLY USEFUL FOR DEBUG"
+  echo "stop      - stop and remove a running container - ONLY USEFUL FOR DEBUG"
+  ;;
+esac
+
+exit 0
+

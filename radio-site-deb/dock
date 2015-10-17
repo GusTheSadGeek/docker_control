@@ -1,0 +1,212 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+IMAGE=radiosite_deb
+TAG=prod
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+CONTAINER="radiositeserver${CONTAINER_SUFFIX}"
+
+case $1 in
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+
+start)
+  ENV=""
+  FWDDEDBUG=""
+
+  if [[ "$3" != "" ]] ; then
+    TAG=$3
+  else
+    TAG="prod"
+  fi
+
+# Radiosite must know the hostname
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+
+  PC_NAME=${MY_PC_NAME}
+  if [ "$PC_NAME" == "" ] ; then
+    PC_NAME=${HOSTNAME}
+  fi
+  if [ "$4" == "VM" ] ; then
+  # For when running in a VM only
+  # Radiosite must know the name of the host PC
+  # This must then resolve locally to the VM address
+    ENV="${ENV} -e PC_NAME=${PC_NAME}"
+  fi
+
+# Keystore must match the hostname
+  rm -rf artifacts
+  mkdir -p artifacts
+  if [ "${MY_HOST_KEYSTORE}" == "" ] ; then
+    cp files/keystore artifacts/tomcat_keystore
+  else
+    cp ${MY_HOST_KEYSTORE} artifacts/tomcat_keystore
+  fi
+
+  # This bit is for when the API does not support SSL
+  if [ "${APISP}" != "" ] ; then
+    ENV="${ENV} -e APISP=${APISP}"
+  fi
+  
+  # Debugging
+  if [ "${WEBDEBUG}" != "" ] ; then
+    DEBUG_PORT=$((8100 + $PORTOFFSET))
+    ENV="${ENV} -e DEBUG_PORT=${DEBUG_PORT}"
+    FWDDEDBUG="-p ${DEBUG_PORT}:${DEBUG_PORT}"
+  fi
+
+# Work out the ports to use
+  API_UNSEC=$((8080 + $PORTOFFSET))
+  API_SEC=$((8443 + $PORTOFFSET))
+#  API_HOST=${HOSTNAME}
+  API_HOST=${PC_NAME}  # This is defined differently to allow for VMs
+
+  WEB_UNSEC=$((8180 + $PORTOFFSET))
+  WEB_SEC=$((8543 + $PORTOFFSET))
+#  WEB_HOST=${HOSTNAME}
+  WEB_HOST=${PC_NAME}  # This is defined differently to allow for VMs
+
+  REC_PORT=$((2082 + $PORTOFFSET))
+  REC_HOST=${HOSTNAME}
+  
+  MEMCACHE_PORT=$((11212 + $PORTOFFSET))
+  MEMCACHE_HOST=${HOSTNAME}
+  
+#  MEMCACHE="${HOSTNAME}:${MEMCACHE_PORT}"
+
+  ENV="${ENV} -e API_HOST=$API_HOST"
+  ENV="${ENV} -e API_PORT=$API_UNSEC"
+  ENV="${ENV} -e API_SEC_PORT=$API_SEC"
+  ENV="${ENV} -e WEB_HOST=$WEB_HOST"
+  ENV="${ENV} -e WEB_PORT=$WEB_UNSEC"
+  ENV="${ENV} -e WEB_SEC_PORT=$WEB_SEC"
+  ENV="${ENV} -e REC_PORT=$REC_PORT"
+  ENV="${ENV} -e REC_HOST=$REC_HOST"
+  ENV="${ENV} -e MEMCACHE_PORT=$MEMCACHE_PORT"
+  ENV="${ENV} -e MEMCACHE_HOST=$MEMCACHE_HOST"
+
+echo $ENV
+
+# Construct Port forwarding commands
+  FWD_UNSEC="-p ${WEB_UNSEC}:${WEB_UNSEC}"
+  FWD_SEC="-p ${WEB_SEC}:${WEB_SEC}"
+  FWD="${FWDDEDBUG} ${FWD_SEC} ${FWD_UNSEC}"
+
+  if [ "$NOPULL" != "1" ] ; then
+    # Only pull from regsitry if NOPULL != 1 - this allows for testing new containers
+    if [[ "$TAG" == "prod" ]] ; then
+      docker pull ${REPO}/${IMAGE}:${TAG}
+    fi
+  fi
+
+echo $FWD
+  PARAMS="${HOSTNAME} ${API_PORT_UNSEC} ${API_PORT_SEC} ${HOSTNAME} ${RS_PORT_UNSEC} ${RS_PORT_SEC} ${HOSTNAME} ${REC_PORT} ${MEMCACHE}"
+  docker run ${ENV} ${FWD} -v ${currentpath}/artifacts:/artifacts -i --name="${CONTAINER}" -d ${REPO}/${IMAGE}:${TAG} /start-radio-site.sh
+  rc=$?
+  echo $rc
+  #${PARAMS}
+  ;;
+
+start-bash)
+# Radiosite must know the hostname
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+  
+# Keystore must match the hostname
+  if [ "${MY_HOST_KEYSTORE}" == "" ] ; then
+    cp files/keystore artifacts/tomcat_keystore
+  else
+    mkdir -p artifacts
+    cp ${MY_HOST_KEYSTORE} artifacts/tomcat_keystore
+  fi
+
+# Work out the ports to use
+  API_PORT_UNSEC=$((8080 + $PORTOFFSET))
+  API_PORT_SEC=$((8443 + $PORTOFFSET))
+  RS_PORT_UNSEC=$((8180 + $PORTOFFSET))
+  RS_PORT_SEC=$((8543 + $PORTOFFSET))
+  REC_PORT=$((2082 + $PORTOFFSET))
+
+# Construct Port forwarding commands
+  FWD_UNSEC="-p ${RS_PORT_UNSEC}:${RS_PORT_UNSEC}"
+  FWD_SEC="-p ${RS_PORT_SEC}:${RS_PORT_SEC}"
+
+  MEMCACHE="${HOSTNAME}:${PORT_MEMCACHED}"
+
+  docker run --rm -i -v ${currentpath}/artifacts:/artifacts ${FWD_SEC} ${FWD_UNSEC}  --name="${CONTAINER}" -t ${REPO}/${IMAGE}:${TAG} bash
+  ;;
+
+
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+
+create-prod)
+  TAG="prod"
+  docker build --no-cache -f ./Dockerfile_prod -t ${REPO}/${IMAGE}:${TAG} .
+  ;;
+
+create-deb)
+  TAG="custom"
+  DEB_FILE=$2
+  ASSETS_FILE=$3
+  ASSETS2_FILE=$4
+  CUCUMBERTESTS_FILE=$5
+  rm -rf artifacts
+  mkdir -p artifacts
+  cp $DEB_FILE artifacts/website.deb
+  cp $ASSETS_FILE artifacts/website-assets.deb
+  cp $ASSETS2_FILE artifacts/website-assets2.deb
+  cp $CUCUMBERTESTS_FILE artifacts/cucumberTests.deb
+  docker build --no-cache -f ./Dockerfile_deb -t ${REPO}/${IMAGE}:${TAG} .
+  ;;
+
+push)
+  docker push ${REPO}/${IMAGE}:${TAG}
+  ;;
+
+logs)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs $3
+  ;;
+
+get-cucumber)
+  docker cp  ${CONTAINER}:/var/lib/debian/bbm-radio-site-cucumber-tests/cucumberTest/ radio-site
+;;
+
+*)
+  echo "Radio Site container"
+  echo "===================="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create-deb [deb] [deb] [deb]- create container using local debs"
+  echo "create-prod                 - create container using deb from prod repo "
+  echo "."
+  echo "start [port offset] [tag]   - start a container running"
+  echo "stop  [port offset]         - stop and remove a running container"
+  echo "attach [port offset]        - attach a bash prompt to running container"
+  echo "."
+  echo "get-cucumber [port offset]  - copy cucumber tests from running container to local filesystem"
+  echo "."
+  echo "start-bash                  - start a container running with bash prompt - DEBUG ONLY"
+  echo "."
+  echo "User environment variable MY_HOST_KEYSTORE=path to your keystore"
+  ;;
+esac

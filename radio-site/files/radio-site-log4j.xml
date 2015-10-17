@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd">
+
+<log4j:configuration xmlns:log4j="http://jakarta.apache.org/log4j/">
+    <appender name="rolling" class="org.apache.log4j.RollingFileAppender">
+        <param name="File" value="${catalina.base}/logs/radiosite/mediagraft.log" />
+        <param name="MaxFileSize" value="100MB" />
+        <param name="MaxBackupIndex" value="10" />
+        <param name="append" value="false" />
+        <layout class="org.apache.log4j.PatternLayout">
+            <param name="ConversionPattern" value="%d [%t] %-5p %c [%x] - %m%n" />
+        </layout>
+    </appender>
+
+    <appender name="console" class="org.apache.log4j.ConsoleAppender">
+        <param name="Target" value="System.Err" />
+        <layout class="org.apache.log4j.PatternLayout">
+            <param name="ConversionPattern" value="%d [%t] %-5p %c [%x] - %m%n" />
+        </layout>
+    </appender>
+
+    <appender name="apicall" class="org.apache.log4j.DailyRollingFileAppender">
+        <param name="File" value="${catalina.home}/logs/apicall.log" />
+        <param name="Append" value="true" />
+        <param name="Threshold" value="DEBUG" />
+        <param name="DatePattern" value="'.'yyyy-MM-dd'.log'" />
+        <layout class="org.apache.log4j.PatternLayout">
+            <param name="ConversionPattern" value="%d %m%n" />
+        </layout>
+    </appender>
+
+    <!-- Specify the level for some specific categories -->
+
+    <!--
+      <logger name="org.hibernate" additivity="false">
+        <level value="trace" />
+        <appender-ref ref="rolling" />
+      </logger>
+    -->
+
+    <logger name="org.hibernate.search" additivity="false">
+        <level value="debug" />
+        <appender-ref ref="rolling" />
+    </logger>
+
+
+    <logger name="org.apache.cxf.interceptor" additivity="false">
+        <level value="info" />
+        <appender-ref ref="rolling" />
+    </logger>
+
+    <logger name="net.sf.ehcache.store" additivity="false">
+        <level value="error" />
+        <appender-ref ref="rolling" />
+    </logger>
+
+    <logger name="com.we7" additivity="false">
+        <level value="debug" />
+        <appender-ref ref="rolling" />
+    </logger>
+
+    <logger name="com.mediagraft.shared" additivity="false">
+        <level value="debug" />
+        <appender-ref ref="rolling" />
+    </logger>
+
+    <logger name="com.mediagraft.muze" additivity="false">
+        <level value="debug" />
+        <appender-ref ref="rolling" />
+    </logger>
+
+    <logger name="com.maxmind.geoip" additivity="false">
+        <level value="debug" />
+        <appender-ref ref="rolling" />
+    </logger>
+
+    <!-- Spring security logging
+      <logger name="org.springframework.security" additivity="false">
+      <level value="debug" />
+      <appender-ref ref="rolling" />
+      </logger>
+    -->
+
+    <logger name="com.mediagraft.podsplice.timing" additivity="false">
+        <level value="debug"/>
+        <appender-ref ref="rolling" />
+    </logger>
+
+    <logger name="API_CALL_LOG" additivity="false">
+        <level value="debug"/>
+        <appender-ref ref="apicall" />
+    </logger>
+
+    <root>
+        <level value="error" />
+        <appender-ref ref="rolling" />
+    </root>
+
+</log4j:configuration>

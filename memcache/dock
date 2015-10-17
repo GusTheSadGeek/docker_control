@@ -1,0 +1,76 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+
+
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+IMAGE=debian_memcache
+
+CONTAINER_SUFFIX=""
+PORTOFFSET="0"
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+CONTAINER="memcache${CONTAINER_SUFFIX}"
+
+case $1 in
+
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+
+start)
+  PORT=$((11212 + ${PORTOFFSET}))
+  FWD="-p ${PORT}:${PORT}"
+  echo $FWD
+  CMD="/usr/bin/memcached -m 64 -p ${PORT} -u nobody -l 0.0.0.0"
+  
+  if [ "$NOPULL" != "1" ] ; then
+    docker pull ${REPO}/${IMAGE}
+  fi
+  docker run ${FWD} -d --name="${CONTAINER}" --restart=always -t ${REPO}/${IMAGE} ${CMD}
+  ;;
+
+start-bash)
+  docker run --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash
+  ;;
+
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+create)
+  docker build -t ${REPO}/${IMAGE} .
+  ;;
+
+logs)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs $2
+  ;;
+
+push)
+  docker push ${REPO}/${IMAGE}
+  ;;
+*)
+  echo "MEMCACHE container"
+  echo "=================="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create               - create the container"
+  echo "."
+  echo "start [port offset]  - start a container running (11212 - default)"
+  echo "stop                 - stop and remove a running container"
+  echo "attach               - attach a bash prompt to running container"
+  echo "logs [-f]            - display the log"
+  echo "."
+  echo "start-bash           - start a container running with bash prompt - DEBUG ONLY"
+  ;;
+esac
+
+
+

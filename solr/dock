@@ -1,0 +1,109 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+
+IMAGE=solr_clean
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+  CONTAINER_SUFFIX="_${PORTOFFSET}"
+fi
+
+CONTAINER="solrserver${CONTAINER_SUFFIX}"
+
+
+case $1 in
+
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+
+start)
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+
+  PORT=$((8880 + $PORTOFFSET))
+
+CMD="/usr/bin/jsvc -cp /usr/share/java/commons-daemon.jar:/usr/share/jetty/start.jar:/usr/share/jetty/start-daemon.jar:/usr/lib/jvm/default-java/lib/tools.jar -outfile /var/log/jetty/out.log -errfile /var/log/jetty/out.log -pidfile /var/run/jetty.pid -Xmx8g -Djava.awt.headless=true -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=55556 -Dcom.sun.management.jmxremote.password.file=/etc/jetty/jmxremote.password -Dcom.sun.management.jmxremote.ssl=false -XX:+UseConcMarkSweepGC -Djava.io.tmpdir=/var/cache/jetty/data -DSTART=/etc/jetty/start.config -Djetty.home=/usr/share/jetty -Djetty.logs=/var/log/jetty -Djetty.host=0.0.0.0 -Djetty.port=8880 org.mortbay.jetty.start.daemon.Bootstrap /etc/jetty/jetty-logging.xml /etc/jetty/jetty.xml /etc/jetty/jetty-shared-webapps.xml ; tail -F /var/log/jetty/out.log"
+
+CMD="/start.sh"
+
+  FWD="-p ${PORT}:8880"
+  if [ "$NOPULL" != "1" ] ; then
+    docker pull ${REPO}/${IMAGE}
+  fi
+
+  docker run ${FWD} -d --name="${CONTAINER}" -d ${REPO}/${IMAGE}  ${CMD}
+;;
+
+start-bash)
+  docker run --privileged --rm -i  -p 8880:8880 -v ${currentpath}/files:/files  --restart=always --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash
+  ;;
+
+
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+create)
+  rm -rf files/puppet
+  cd files &&  git clone --depth=1 --branch=solr_dock git@github.com:GusTheSadGeek/puppet.git  &&  cd puppet && git remote set-url --push origin nopush
+  cd ../..
+
+
+## This container needs to be run to finish creation so create a temp image, run it then create a image from temp container
+  TEMPIMAGE="solr_temp"
+  
+  CMD="/files/setup.sh"
+  
+  docker build -t ${TEMPIMAGE} .
+  docker run --privileged ${FWD} -v ${currentpath}/files:/files --name="${CONTAINER}" ${LINK} -d -t ${TEMPIMAGE} ${CMD}
+
+# Log the output of the running container - the container will stop when completed
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs -f
+
+# Commit the running container to an image with the proper name
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r -I {} docker commit {} ${REPO}/${IMAGE}
+
+# remove the temp container
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+
+# remove the temp image
+  docker rmi ${TEMPIMAGE}
+  ;;
+
+logs)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs $3
+  ;;
+
+push)
+  docker push ${REPO}/${IMAGE}
+  ;;
+
+*)
+  echo "API container"
+  echo "============="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create               - create the unpopulated container"
+  echo "."
+  echo "start [port offset]  - start a container running"
+  echo "stop                 - stop and remove a running container"
+  echo "attach               - attach a bash prompt to running container"
+  echo "logs [-f]            - display the log"
+  echo "."
+  echo "start-bash           - start a container running with bash prompt - DEBUG ONLY"
+  ;;
+esac
+
+exit 0
+

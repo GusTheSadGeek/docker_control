@@ -1,0 +1,90 @@
+#!/bin/bash
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+
+IMAGE=solr_indexer
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+CONTAINER="solr_indexer${CONTAINER_SUFFIX}"
+
+
+
+HOSTNAME=${MY_HOST_NAME}
+if [ "$HOSTNAME" == "" ] ; then
+  HOSTNAME=`hostname -f`
+fi
+if [[ $3 != "" ]] ; then
+  HOSTNAME=$3
+fi
+
+#DB_PORT=$((5432 + $PORTOFFSET))
+API_PORT_UNSEC=$((8080 + $PORTOFFSET))
+API_PORT_SEC=$((8443 + $PORTOFFSET))
+
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+if [ "$SSL" == "" ] ; then
+  SSL="1"
+fi
+
+case $1 in
+
+start)
+  if [ "$NOPULL" != "1" ] ; then
+    docker pull ${REPO}/${IMAGE}
+  fi
+  PARAMS="${HOSTNAME} ${API_PORT_UNSEC} ${API_PORT_SEC}"
+  docker run --rm --name="${CONTAINER}" -t ${REPO}/${IMAGE}  /index.sh ${PARAMS}  ${SSL} ${VM}
+  ;;
+  
+stop)
+  # Shouldn't be needed as the container should auto stop
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+create)
+  rm -rf testdb-creator
+  git clone --depth=1 --branch=develop git@github.com:we7/testdb-creator
+  docker build --no-cache -t ${REPO}/${IMAGE} .
+  ;;
+  
+push)
+  docker push ${REPO}/${IMAGE}
+  ;;
+  
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+  
+start-bash)
+  docker run --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash
+  ;;
+  
+clear-db)
+  SETUP="export PYTHONPATH=/vagrant/testdb-creator/venv:/usr/local/lib/python2.7/dist-packages:/usr/lib/python2.7/dist-packages && cd /testdb-creator && . venv/bin/activate"
+  CMD="./main.py 1 1"
+  docker run --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash -c "${SETUP} && ${CMD}"
+  ;;
+  
+run-steps)
+  SETUP="export PYTHONPATH=/vagrant/testdb-creator/venv:/usr/local/lib/python2.7/dist-packages:/usr/lib/python2.7/dist-packages && cd /testdb-creator && . venv/bin/activate"
+  CMD="./main.py $2 $3"
+  docker run --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash -c "${SETUP} && ${CMD}"
+
+;;
+*)
+  echo "Usage:  ./dock <option>"
+  echo "start     - start a container running"
+  echo "stop      - stop and remove a running container"
+  echo "create    - create a docker container image"
+  echo "push      - push a docker container image to the registry THINK CAREFULLY!!"
+  ;;
+esac
+
+exit 0
+

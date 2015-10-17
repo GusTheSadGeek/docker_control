@@ -1,0 +1,107 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+COMMAND=$1
+#Either
+PORTOFFSET=$2
+#or
+CREATEOPTION=$2
+
+IGNORE=$3
+
+function create {
+  echo "=============================================================================="
+  echo "Creating $1"
+  echo "."
+  cd ../${COMMAND}
+  ./dock create${CREATEOPTION}
+  rc=$?
+  cd ../scripts
+
+  if [[ $rc != 0 ]] ; then
+    echo "Create $1 - failed"
+    exit 1
+  fi  
+}
+
+function stop {
+  directory=$1
+  offset=$2
+  ../${directory}/dock stop ${offset}
+}
+
+function start {
+  directory=$1
+  offset=$2
+  tag=$3
+  ../${directory}/dock start ${offset} ${tag}
+  rc=$?
+  if [[ $rc != 0 ]] ; then
+    echo "Start $1 $2 $3 - failed"
+    exit 1
+  fi
+}
+
+
+
+case ${COMMAND} in
+
+create)
+  create testDB
+  create recommendations
+  create memcache
+  create api-deb
+  create radio-site-deb
+  ;;
+
+start)
+  start memcache ${PORTOFFSET}
+  start testDB ${PORTOFFSET}
+  start solr ${PORTOFFSET}
+  case ${IGNORE} in
+  api)
+    start recommendations ${PORTOFFSET} prod
+    start radio-site-deb ${PORTOFFSET} prod
+    ;;
+  web)
+    start api-deb ${PORTOFFSET} prod
+    start recommendations ${PORTOFFSET} prod
+    ;;
+  rec)
+    start api-deb ${PORTOFFSET} prod
+    start radio-site-deb ${PORTOFFSET} prod
+    ;;
+  *)
+    start api-deb ${PORTOFFSET} prod
+    start recommendations ${PORTOFFSET} prod
+    start radio-site-deb ${PORTOFFSET} prod
+    echo "Waiting for api to boot..."
+    sleep 30
+    stop solrIndexer ${PORTOFFSET}
+    start solrIndexer ${PORTOFFSET}
+    ;;
+  esac
+  ;;
+  
+index)
+  start solrIndexer ${PORTOFFSET}
+  ;;
+  
+stop)
+  stop testDB     ${PORTOFFSET}
+  stop recommendations   ${PORTOFFSET}
+  stop memcache   ${PORTOFFSET}
+  stop api-deb        ${PORTOFFSET}
+  stop radio-site-deb ${PORTOFFSET}
+  stop solr       ${PORTOFFSET}
+  ;;
+
+esac
+  
+
+
+
+
+

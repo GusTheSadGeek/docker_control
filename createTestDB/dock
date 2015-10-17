@@ -1,0 +1,203 @@
+#!/bin/bash
+calledfrom=`pwd`
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+cd $currentpath
+
+export SSL="1"
+
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+
+IMAGE=det_testdb_creator
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+CONTAINER="testdb_creator${CONTAINER_SUFFIX}"
+
+HOSTNAME=${MY_HOST_NAME}
+if [ "$HOSTNAME" == "" ] ; then
+  HOSTNAME=`hostname -f`
+fi
+
+DB_PORT=$((5432 + $PORTOFFSET))
+API_PORT_UNSEC=$((8080 + $PORTOFFSET))
+API_PORT_SEC=$((8443 + $PORTOFFSET))
+  
+currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+case $1 in
+
+start)
+  docker run -p ${HOSTPORT}:${GUESTPORT} -d  --name="${CONTAINER}" --restart=always -t ${REPO}/${IMAGE}
+  ;;
+  
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+  
+restart)
+  docker ps --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop
+  docker ps -a --no-trunc | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  docker run -p ${HOSTPORT}:${GUESTPORT} -d  --name="${CONTAINER}" -t ${REPO}/${IMAGE}
+  ;;
+  
+create-image)
+  rm -rf testdb-creator
+#  git clone --depth=1 --branch=fixrec git@github.com:GusTheSadGeek/testdb-creator
+  git clone --branch=develop git@github.com:we7/testdb-creator
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+#  cd testdb-creator
+#  git checkout develop
+#  cd ..
+  rm -rf track-versions
+  git clone --depth=1 --branch=develop git@github.com:we7/track-versions
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+
+  rm -rf artifacts
+  mkdir -p artifacts
+    
+  if [ "${MY_HOST_KEYSTORE}" == "" ] ; then
+    cp files/api_keystore artifacts/api_keystore
+  else
+    cp ${MY_HOST_KEYSTORE} artifacts/api_keystore
+  fi
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+
+  cp ../massuploader/mass-upload-client-1.0.jar artifacts/mass-upload-client-1.0.jar
+  
+  cp files/local-we7trackversion.cfg artifacts/local-we7trackversion.cfg
+  eval "sed -i 's/localhost/${HOSTNAME}/g' artifacts/local-we7trackversion.cfg"
+  eval "sed -i 's/5432/${DB_PORT}/g' artifacts/local-we7trackversion.cfg"
+
+
+echo "[mediagraft]" >  artifacts/local-testdb.cfg
+#mediagraft_path=/vagrant/api
+echo "hostname=${HOSTNAME}"          >>  artifacts/local-testdb.cfg
+echo "port=${API_PORT_UNSEC}"        >>  artifacts/local-testdb.cfg
+echo "secure_port=${API_PORT_SEC}"   >>  artifacts/local-testdb.cfg
+echo "path="                         >>  artifacts/local-testdb.cfg
+echo " "                        >>  artifacts/local-testdb.cfg
+echo "[database]"               >>  artifacts/local-testdb.cfg
+echo "db_name=podsplice"        >>  artifacts/local-testdb.cfg
+echo "username=postgres"        >>  artifacts/local-testdb.cfg
+echo "password=ubictesting"     >>  artifacts/local-testdb.cfg
+echo "hostname=${HOSTNAME}"     >>  artifacts/local-testdb.cfg
+echo "port=${DB_PORT}"          >>  artifacts/local-testdb.cfg
+echo "replace_db=1"             >>  artifacts/local-testdb.cfg
+echo " "                        >>  artifacts/local-testdb.cfg
+
+
+echo "[massuploader]"                             >>  artifacts/local-testdb.cfg
+echo "massuploader_path=/testdb-creator"          >>  artifacts/local-testdb.cfg
+echo "keystore=/testdb-creator/api_keystore"      >>  artifacts/local-testdb.cfg
+
+
+
+#  cd artifacts
+#  wget http://vagrantdata.we7.local/testdb/latest_bin.tar.gz
+#  tar -xf latest_bin.tar.gz
+#  find . -name "*rec.sql_bin" -print0 | xargs -0 -I file mv file latest_rec.sqlbin
+#  find . -name "*.sql_bin" -print0 | xargs -0 -I file mv file latest.sqlbin
+#  cd ..
+
+  docker build --no-cache -t ${REPO}/${IMAGE} .
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  #rm -f artifacts/*
+  ;;
+
+create-db)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+
+  ../scripts/dock stop ${PORTOFFSET}
+  ../scripts/dock start ${PORTOFFSET}
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  sleep 5
+
+  SETUP="export PYTHONPATH=/vagrant/testdb-creator/venv:/usr/local/lib/python2.7/dist-packages:/usr/lib/python2.7/dist-packages && cd /testdb-creator && . venv/bin/activate"
+  CMD="./main.py 1 1"
+  docker run --rm --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash -c "${SETUP} && ${CMD}"
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+
+  ../api-deb/dock stop ${PORTOFFSET}
+  ../api-deb/dock start ${PORTOFFSET} prod
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  sleep 60
+
+  SETUP="export PYTHONPATH=/vagrant/testdb-creator/venv:/usr/local/lib/python2.7/dist-packages:/usr/lib/python2.7/dist-packages && cd /testdb-creator && . venv/bin/activate"
+  CMD="./main.py 3 13 && ./main.py 15 16 && /backupdb.sh"
+  docker run --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash -c "${SETUP} && ${CMD}"
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+
+  rm -rf artifacts/backups
+  mkdir -p artifacts/backups
+  docker cp ${CONTAINER}:/backups/ artifacts/
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  docker rm ${CONTAINER}
+  ;;
+
+upload)
+  cd artifacts/backups
+  scp *.gz vagrantdata@hades:/home/vagrantdata/data/testdb/
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  scp *bin.tar.gz vagrantdata@hades:/home/vagrantdata/data/testdb/latest_bin.tar.gz
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  scp *text.tar.gz vagrantdata@hades:/home/vagrantdata/data/testdb/latest_text.tar.gz
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  ;;
+
+backup)
+  SETUP="export PYTHONPATH=/vagrant/testdb-creator/venv:/usr/local/lib/python2.7/dist-packages:/usr/lib/python2.7/dist-packages && cd /testdb-creator && . venv/bin/activate"
+  CMD="/backupdb.sh"
+  docker run -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash -c "${SETUP} && ${CMD}"
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  rm -rf artifacts/backups
+  mkdir -p artifacts/backups
+  docker cp ${CONTAINER}:/backups/ artifacts/
+  rc=$?;if [[ ${rc} != 0 ]] ; then exit ${rc};fi
+  docker rm ${CONTAINER}
+  ;;
+  
+push)
+  docker push ${REPO}/${IMAGE}
+  ;;
+  
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+  
+start-bash)
+  docker run --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash
+  ;;
+  
+clear-db)
+  SETUP="export PYTHONPATH=/vagrant/testdb-creator/venv:/usr/local/lib/python2.7/dist-packages:/usr/lib/python2.7/dist-packages && cd /testdb-creator && . venv/bin/activate"
+  CMD="./main.py 1 1"
+  docker run --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash -c "${SETUP} && ${CMD}"
+  ;;
+
+run-steps)
+  SETUP="export PYTHONPATH=/vagrant/testdb-creator/venv:/usr/local/lib/python2.7/dist-packages:/usr/lib/python2.7/dist-packages && cd /testdb-creator && . venv/bin/activate"
+  CMD="./main.py $2 $3"
+  docker run --rm -i  --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash -c "${SETUP} && ${CMD}"
+  ;;
+  
+*)
+  echo "Usage:  ./dock <option>"
+  echo "create-image [port-offset]   - create a docker container image with all components required to create a testdb"
+  echo "create-db    [port-offset]   - create test db. The testdb and api containers must be running with same offset"
+  echo "upload                       - upload files in artifacts/backups to vagrantdata"
+  echo "backup       [port-offset]"
+  echo "start     - start a container running"
+  echo "stop      - stop and remove a running container"
+  echo "push      - push a docker container image to the registry THINK CAREFULLY!!"
+  ;;                                                           
+
+esac
+
+

@@ -1,0 +1,13 @@
+workDir: /var/lib/bbm-core-api
+http:
+  port: @http_port@
+  connectionTimeout: 20000
+  disableUploadTimeout: false
+https:
+  port: @https_port@
+  scheme: https
+  secure: true
+  ssl: true
+  connectionTimeout: 20000
+  disableUploadTimeout: false
+  keystore: /usr/share/bbm-core-api/tomcat_keystore

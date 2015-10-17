@@ -1,0 +1,29 @@
+VAGRANTFILE_API_VERSION = '2'
+ENV['VAGRANT_DEFAULT_PROVIDER']='docker'
+
+vagrant_root = File.dirname(__FILE__)
+
+if ARGV.first == 'up'
+  puts "Vagrantfile in #{vagrant_root}"
+end
+
+# if ARGV.first == 'up'
+#   if not File.directory?("#{vagrant_root}/mass-upload-client")
+#     system('git clone --depth=1 --branch=master git@github.com:we7/mass-upload-client')
+#   else
+#     system('git fetch origin && git pull origin master')
+#   end
+# end
+
+#IMAGE_NAME='massupload'
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.provider 'docker' do |d|
+    d.build_dir = '.'
+#    d.build_args = '-i'.split(' ')
+    d.name = 'postgresql_provider'
+    d.ports = ['5432:5432']
+    d.remains_running = true
+#    d.cmd = ['/etc/init.d/postgresql start']
+  end
+end

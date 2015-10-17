@@ -1,0 +1,511 @@
+#!/bin/bash
+
+function fn_check_docker
+{
+  dver=`docker -v`
+
+  if [[ $dver == *" 1.4."* ]] || [[ $dver == *" 1.3."* ]] || [[ $dver == *" 1.2."* ]] || [[ $dver == *" 1.1."* ]] || [[ $dver == *" 1.0."* ]] || [[ $dver == *" 0."* ]]
+  then
+    echo "Docker version is too low"
+    echo "a miniumum of lxc-docker 1.5.0 is required"
+    echo "Visit :-"
+    echo "https://docs.docker.com/installation/ubuntulinux/"
+    echo "and install the 'Docker-maintained Package Installation'"
+    echo "Then sudo adduser <username> docker and reboot."
+    exit 1
+  fi 
+}
+
+
+function fn_init
+{
+  settings="/tmp/container_settings"
+  
+  if [ -e ${settings} ]
+  then
+    source ${settings}
+  fi
+}
+
+
+function fn_select_containers
+{
+  m3=""
+  m4=""
+  backtitle="Guvera Container Setup"
+  title="Guvera container selection"
+
+  OK=0
+  while [[ ${OK} == "0" ]]
+  do
+
+    message="Select which containers you want setup. \n\nThe default selections will provide a production Guvera solution\n${m3}${m4}"
+
+    cmd=(dialog \
+      --title "${title}"\
+      --backtitle "${backtitle}"\
+      --separate-output --colors \
+      --checklist "${message}" 42 76 36)
+
+    options=(1 "Memcached" on    # any option can be set to default to "on"
+             2 "PostgresSQL - TestDB" on
+             3 "SOLR" on
+             4 "Recommendations - prod" on
+             5 "Radio-Site - prod" on
+             6 "Radio-Site - custom" off
+             7 "API - prod" on
+             8 "API - custom" off)
+    choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
+    clear
+    containers=${choices}
+    OK=1
+    c_radiosite_prod=0
+    c_api_prod=0
+    c_radiosite_custom=0
+    c_api_custom=0
+    c_memcached=0
+    c_postgres=0
+    c_solr=0
+    c_rec=0
+    m3=""
+    m4=""
+    for choice in $choices
+    do
+        case $choice in
+            1)
+                c_memcached=1
+                ;;
+            2)
+                c_postgres=1
+                ;;
+            3)
+                c_solr=1
+                ;;
+            4)
+                c_rec=1
+                ;;
+            5)
+                c_radiosite_prod=1
+                ;;
+            6)
+                if [[ ${c_radiosite_prod} == 1 ]]
+                then
+                  OK=0
+                  m3="\n\Zb\Z1 ONLY ONE WEB SITE !!\n"
+                fi
+                c_radiosite_custom=1
+                ;;
+            7)
+                c_api_prod=1
+                ;;
+            8)
+                if [[ ${c_api_prod} == 1 ]]
+                then
+                  OK=0
+                  m4="\n\Zb\Z1 ONLY ONE API !!\n"
+                fi
+                c_api_custom=1
+                ;;
+        esac
+     done
+   done
+}
+
+function fn_enter_port_offset
+{
+  m3=""
+  port_offset=""
+  while [[ "$port_offset" == "" ]] 
+  do
+    port_offset=$MY_PORT_OFFSET
+    backtitle="Guvera Container Setup"
+    m1="Enter the port offset you require.\n\nBase Ports are:-\n8080/8443   api\n8180/8543   web-site\n2082        recommendations\n5432        postgresql\n11212       memcached\n8880        solr\n"
+    m2="A value of 0 will use these ports\nA value of 10000 will use ports 18080/18443 etc.\n \nEnsure that these ports are not already in use !\n \n"
+    message="$m1$m2$m3"
+    title="Guvera container selection"
+    
+    m3="\n\n\Zb\Z1 YOU MUST ENTER A DECIMAL VALUE (0 <= n <= 22000)!!\n\n"
+
+    DIALOG=${DIALOG=dialog}
+    tempfile=`tempfile 2>/dev/null` || tempfile=/tmp/test$$
+    trap "rm -f $tempfile" 0 1 2 5 15
+
+    $DIALOG --backtitle "$backtitle" \
+            --colors --title "$title" --clear \
+            --inputbox "$message" 25 60 $port_offset 2> $tempfile
+
+    retval=$?
+    port_offset=""
+    case $retval in
+      0)
+        port_offset=`cat $tempfile`
+        # Check that text is a number
+        re='^[0-9]+$'
+        if ! [[ $port_offset =~ $re ]] ; then
+          port_offset=""
+        fi  
+        if [[ port_offset -gt 22000 ]] ; then
+          port_offset=""
+        fi
+        ;;
+      1)
+        echo "Cancel pressed."
+        exit 1
+        ;;
+      255)
+        if test -s $tempfile ; then
+          cat $tempfile
+        else
+          echo "ESC pressed."
+        fi
+        exit 1
+        ;;
+    esac  
+  done
+}
+
+function fn_select_options
+{
+  backtitle="Guvera Container Setup"
+  message="Select options ... \n\n"
+  title="Guvera container options"
+
+  cmd=(dialog \
+    --title "${title}"\
+    --backtitle "${backtitle}"\
+    --separate-output\
+    --checklist "${message}" 12 55 6)
+ 
+  options=()
+  if [[ $c_radiosite_prod == 1 ]] || [[ $c_radiosite_custom == 1 ]]
+  then
+    options=("${options[@]}" "1" "Debug Web Site" off)
+  fi
+  
+  if [[ $c_api_prod == 1 ]] || [[ $c_api_custom == 1 ]]
+  then
+    options=("${options[@]}" "2" "Debug API" off)
+  fi
+
+  options=("${options[@]}" "3" "Offline - no pull from registry" off)
+
+           
+  choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
+  clear
+  containers=${choices}
+  NOPULL=""
+
+  for choice in $choices
+  do
+      case $choice in
+          1)
+              WEBDEBUG=1
+              ;;
+          2)
+              APIDEBUG=1
+              ;;
+          3)
+              NOPULL="1"
+              ;;
+      esac
+  done
+}
+
+
+function fn_keystore
+{
+  keystore=""
+  m3=""
+  while [[ "$keystore" == "" ]]
+  do
+    keystore=$MY_HOST_KEYSTORE
+    backtitle="Guvera Container Setup"
+    m1="Enter the path to your keystore\n"
+    message="$m1$m3"
+    title="Guvera keystore selection"
+    
+    m3="\n\n\Zb\Z1 YOU MUST A PATH THAT EXISTS!!\n\n"
+
+    DIALOG=${DIALOG=dialog}
+    tempfile=`tempfile 2>/dev/null` || tempfile=/tmp/test$$
+    trap "rm -f $tempfile" 0 1 2 5 15
+
+    $DIALOG --backtitle "$backtitle" \
+            --colors --title "$title" --clear \
+            --inputbox "$message" 25 60 $keystore 2> $tempfile
+
+    retval=$?
+    case $retval in
+      0)
+        ks=`cat $tempfile`
+        if [ -e $ks ]
+        then
+          keystore=$ks
+        else
+          keystore=""
+        fi
+        ;;
+      1)
+        echo "Cancel pressed."
+        exit 1
+        ;;
+      255)
+        if test -s $tempfile ; then
+          cat $tempfile
+        else
+          echo "ESC pressed."
+        fi
+        exit 1
+        ;;
+    esac  
+  done
+}  
+
+function fn_hostname
+{
+  hostname=""
+  m3=""
+  while [[ "$hostname" == "" ]]
+  do
+    hostname=${MY_HOST_NAME}
+    if [ "$hostname" == "" ] ; then
+      hostname=`hostname -f`
+    fi
+
+    backtitle="Guvera Container Setup"
+    m1="Enter the hostname that matches the keystore\n"
+    message="$m1$m3"
+    title="Guvera hostname selection"
+
+    m3="\n\n\Zb\Z1 YOU MUST ENTER A NAME!!\n\n"
+
+    DIALOG=${DIALOG=dialog}
+    tempfile=`tempfile 2>/dev/null` || tempfile=/tmp/test$$
+    trap "rm -f $tempfile" 0 1 2 5 15
+
+    $DIALOG --backtitle "$backtitle" \
+            --colors --title "$title" --clear \
+            --inputbox "$message" 25 60 $hostname 2> $tempfile
+
+    retval=$?
+    case $retval in
+      0)
+        ks=`cat $tempfile`
+        hostname=$ks
+        ;;
+      1)
+        echo "Cancel pressed."
+        exit 1
+        ;;
+      255)
+        if test -s $tempfile ; then
+          cat $tempfile
+        else
+          echo "ESC pressed."
+        fi
+        exit 1
+        ;;
+    esac
+  done
+}
+
+function fn_summary
+{
+  backtitle="Guvera Container Setup"
+  title="Guvera container selection - Summary"
+
+  m="\nHostname - ${hostname}\n\n"
+  if [[ $c_memcached == 1 ]] ; then
+     p=$((11212+$port_offset))
+     m="${m}Memcache        port $p\n"
+  fi
+  if [[ $c_postgres == 1 ]] ; then
+     p=$((5432+$port_offset))
+     m="${m}TestDB          port $p\n"
+  fi
+  if [[ $c_solr == 1 ]] ; then
+     p=$((8880+$port_offset))
+     m="${m}SOLR            port $p\n"
+  fi
+  if [[ $c_rec == 1 ]] ; then
+     p=$((2082+$port_offset))
+     m="${m}Recommendations port $p\n"
+  fi
+  if [[ $c_api_prod == 1 ]] ; then
+     p1=$((8080+$port_offset))
+     p2=$((8443+$port_offset))
+     if [[ "$APIDEBUG" != "" ]] ; then
+       p3="[$((8000+$port_offset)) debug]"
+     fi
+     m="${m}API prod        ports $p1 $p2 $p3\n"
+  fi
+  if [[ $c_api_custom == 1 ]] ; then
+     p1=$((8080+$port_offset))
+     p2=$((8443+$port_offset))
+     if [[ "$APIDEBUG" != "" ]] ; then
+       p3="[$((8000+$port_offset)) debug]"
+     fi
+     m="${m}API custom      ports $p1 $p2 $p3\n"
+  fi
+
+  if [[ $c_radiosite_prod == 1 ]] ; then
+     p1=$((8180+$port_offset))
+     p2=$((8543+$port_offset))
+     if [[ "$WEBDEBUG" != "" ]] ; then
+       p3="[$((8100+$port_offset)) debug]"
+     fi
+     m="${m}Website prod    ports $p1 $p2 $p3\n"
+  fi
+  if [[ $c_radiosite_custom == 1 ]] ; then
+     p1=$((8180+$port_offset))
+     p2=$((8543+$port_offset))
+     if [[ "$WEBDEBUG" != "" ]] ; then
+       p3="[$((8100+$port_offset)) debug]"
+     fi
+     m="${m}Website custom  ports $p1 $p2 $p3\n"
+  fi
+
+  m="${m}\nKeystore    $keystore\n"
+
+  if [[ $NOPULL != "" ]] ; then
+    m="${m}\nUsing local cached containers (no pull)\n"
+  else
+    m="${m}\nUsing latest containers from registry\n"
+  fi
+
+  m="${m}\n <Yes> to continue or <No> to abort"
+
+
+  message="$m"
+  DIALOG=${DIALOG=dialog}
+  $DIALOG --backtitle "$backtitle" \
+          --colors --title "$title" --clear \
+          --yesno "$message" 25 60
+
+  retval=$?
+  if [[ $retval != 0 ]] ; then
+    exit $retval
+  fi
+}
+
+
+function fn_start_containers
+{
+  if [ "$insideVM" == "VM" ] ; then
+    export MY_PC_NAME=$hostname
+    export MY_HOST_NAME="dockerVM"
+    export MY_HOST_KEYSTORE=$keystore
+    export VM="VM"
+  else
+    export MY_HOST_NAME=$hostname
+    export MY_HOST_KEYSTORE=$keystore
+  fi
+
+
+
+  if [[ $c_memcached == 1 ]]
+  then
+     echo "memcache"
+     memcache/dock stop $port_offset
+     NOPULL=$NOPULL memcache/dock start $port_offset
+  fi
+
+  if [[ $c_postgres == 1 ]]
+  then
+     echo "c_postgres"
+     testDB/dock stop $port_offset
+     NOPULL=$NOPULL testDB/dock start $port_offset
+  fi
+
+  if [[ $c_rec == 1 ]]
+  then
+     echo "c_rec"
+     recommendations/dock stop $port_offset prod
+     NOPULL=$NOPULL recommendations/dock start $port_offset prod
+  fi
+
+  if [[ $c_radiosite_prod == 1 ]]
+  then
+     echo "c_radiosite_prod"
+     radio-site-deb/dock stop $port_offset prod
+     NOPULL=$NOPULL WEBDEBUG=$WEBDEBUG radio-site-deb/dock start $port_offset prod ${insideVM}
+  fi
+
+  if [[ $c_radiosite_custom == 1 ]]
+  then
+     echo "c_radiosite_custom"
+     radio-site-deb/dock stop $port_offset custom
+     NOPULL=$NOPULL WEBDEBUG=$WEBDEBUG radio-site-deb/dock start $port_offset custom
+  fi
+
+  if [[ $c_api_prod == 1 ]]
+  then
+     echo "c_api_prod"
+     api-deb/dock stop $port_offset prod
+     NOPULL=$NOPULL APIDEBUG=$APIDEBUG api-deb/dock start $port_offset prod
+  #   scripts/dock index $port_offset
+  fi
+
+  if [[ $c_api_custom == 1 ]]
+  then
+     echo "c_api_custom"
+     radio-site-deb/dock stop $port_offset custom
+     NOPULL=$NOPULL APIDEBUG=$APIDEBUG radio-site-deb/dock start $port_offset custom
+  fi
+
+  if [[ $c_solr == 1 ]]
+  then
+     echo "c_solr"
+     solr/dock stop $port_offset
+     NOPULL=$NOPULL solr/dock start $port_offset
+     sleep 5
+     MY_HOST_NAME=$hostname NOPULL=$NOPULL scripts/dock index $port_offset
+  fi
+}
+####################################################################################
+
+fn_init
+
+# Check docker version is at least 1.5
+fn_check_docker 
+
+if [ "$1" == "stop" ]
+then
+  scripts/dock stop $2 
+  exit 0
+fi
+
+containers=""
+port_offset=""
+
+# Which containers ?
+fn_select_containers
+
+# What port offset ?
+fn_enter_port_offset
+
+# Enable debugger 
+fn_select_options
+
+fn_keystore
+
+fn_hostname
+
+insideVM=''
+PC_NAME=`hostname -f`
+if [ "$PC_NAME" == "dockerVM" ]
+then
+  insideVM='VM'
+fi
+
+
+# Display Summary and give chance to abort
+fn_summary
+
+echo "MY_HOST_NAME=${hostname}" > ${settings}
+echo "MY_HOST_KEYSTORE=${keystore}" >> ${settings}
+echo "MY_PORT_OFFSET=${port_offset}" >> ${settings}
+
+# Ronseal
+fn_start_containers
+

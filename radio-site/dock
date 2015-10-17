@@ -1,0 +1,254 @@
+#!/bin/bash
+
+REPO="docker.blinkboxmusic.com/blinkboxmusic_test"
+IMAGE=radiosite
+TAG="custom"
+
+CONTAINER_SUFFIX=""
+PORTOFFSET=0
+if [[ $2 != "" ]] ; then
+  PORTOFFSET=$2
+fi
+CONTAINER_SUFFIX="_${PORTOFFSET}"
+
+CONTAINER="radiositeserver${CONTAINER_SUFFIX}"
+
+# Get radiosite from a commit branch & sha
+function get-radiosite-commit
+{
+  branch=$1
+  commit=$2
+  TAG="cust_${commit}"
+  rm -rf radio-site
+  git clone --depth=100 --branch=${branch} git@github.com:we7/radio-site
+  cd radio-site
+  git checkout ${commit}
+  cd ..
+}
+
+
+# get latest radiosite from a branch
+function get-radiosite
+{
+  branch=$1
+  TAG="cust_${branch}"
+  if  [ -e radio-site ]; then
+    echo "fetch"
+    cd radio-site
+    git fetch origin && git pull origin ${branch}
+    cd ..
+  else
+    echo "clone"
+    git clone --depth=1 --branch=${branch} git@github.com:we7/radio-site
+  fi
+}
+
+
+function make-radiosite
+{
+  rm -rf artifacts
+  mkdir -p artifacts
+  if [ "${MY_HOST_KEYSTORE}" == "" ] ; then
+    cp files/keystore artifacts/tomcat_keystore
+  else
+    cp ${MY_HOST_KEYSTORE} artifacts/tomcat_keystore
+  fi
+  cp -f files/temp_local.props radio-site/local.props
+
+#  rm -rf gradlebuilds/files
+#  cp -rf files gradlebuilds/files
+
+
+  TEMPCONTAINER="radiosite_temp_container"
+  TEMPIMAGE="radiosite_temp"
+  docker build -t ${TEMPIMAGE} .
+
+  PORTOFFSET=0
+  if [[ $2 != "" ]] ; then
+    PORTOFFSET=$2
+  fi
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+
+  API_PORT_UNSEC=$((8080 + $PORTOFFSET))
+  API_PORT_SEC=$((8443 + $PORTOFFSET))
+  RS_PORT_UNSEC=$((8180 + $PORTOFFSET))
+  RS_PORT_SEC=$((8543 + $PORTOFFSET))
+  REC_PORT=$((2082 + $PORTOFFSET))
+  PORT_MEMCACHED=$((11812 + $PORTOFFSET))
+  
+  FWD_UNSEC="-p ${RS_PORT_UNSEC}:${RS_PORT_UNSEC}"
+  FWD_SEC="-p ${RS_PORT_SEC}:${RS_PORT_SEC}"
+
+  MEMCACHE_HOST="${HOSTNAME}:${PORT_MEMCACHED}"
+
+  PARAMS="${HOSTNAME} ${API_PORT_UNSEC} ${API_PORT_SEC} ${HOSTNAME} ${RS_PORT_UNSEC} ${RS_PORT_SEC} ${HOSTNAME} ${REC_PORT} ${MEMCACHE_HOST}"
+
+  CMD="/create-radio-site.sh"
+  
+  currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )  
+  echo "${currentpath}/radio-site"
+  docker run -v ${currentpath}/radio-site:/tempradiosite ${FWD_SEC} ${FWD_UNSEC} --name="${TEMPCONTAINER}" -d -t ${TEMPIMAGE} ${CMD}
+  
+  rc=$?
+  if [[ $rc == 0 ]] ; then
+    ## Log the output of the running container - the container will stop when completed
+    docker ps -a | grep "${TEMPCONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs -f
+  fi
+#
+  rc=$?
+  if [[ $rc == 0 ]] ; then
+    ## Commit the running container to an image with the proper name
+    docker ps -a | grep "${TEMPCONTAINER}" | awk '{print $1}' | xargs -L 1 -r -I {} docker commit {} ${REPO}/${IMAGE}:${TAG}
+  fi
+#
+  rc=$?
+  if [[ $rc == 0 ]] ; then
+    ## remove the temp container
+    docker ps -a | grep "${TEMPCONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  fi
+#
+  rc=$?
+  if [[ $rc == 0 ]] ; then
+    ## remove the temp image
+    docker rmi ${TEMPIMAGE}
+  fi
+  rc=$?
+  if [[ $rc == 0 ]] ; then
+    echo "$TAG" > artifacts/lasttag.txt
+  fi
+}
+
+case $1 in
+attach)
+  docker exec -i -t ${CONTAINER} bash
+  ;;
+
+start)
+  if [[ $3 != "" ]] ; then
+    TAG=$3
+  else
+    TAG=`cat artifacts/lasttag.txt`
+  fi
+  
+
+  PORTOFFSET=0
+  if [[ $2 != "" ]] ; then
+    PORTOFFSET=$2
+  fi
+
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+
+  ENV=""
+  FWDDEDBUG=""
+  if [ "${APISP}" != "" ] ; then
+    ENV="${ENV} -e APISP=${APISP}"
+  fi
+  if [ "${RSDEBUG}" != "" ] ; then
+    ENV="${ENV} -e RSDEBUG=${RSDEBUG}"
+    DB_PORT=$((8000 + $PORTOFFSET))
+    FWDDEDBUG="-p ${DB_PORT}:8000"
+  fi
+
+  API_PORT_UNSEC=$((8080 + $PORTOFFSET))
+  API_PORT_SEC=$((8443 + $PORTOFFSET))
+  RS_PORT_UNSEC=$((8180 + $PORTOFFSET))
+  RS_PORT_SEC=$((8543 + $PORTOFFSET))
+  REC_PORT=$((2082 + $PORTOFFSET))
+  PORT_MEMCACHED=$((11812 + $PORTOFFSET))
+  
+  FWD_UNSEC="-p ${RS_PORT_UNSEC}:${RS_PORT_UNSEC}"
+  FWD_SEC="-p ${RS_PORT_SEC}:${RS_PORT_SEC}"
+  
+  FWD="${FWDDEDBUG} ${FWD_SEC} ${FWD_UNSEC}"
+
+  MEMCACHE="${HOSTNAME}:${PORT_MEMCACHED}"
+
+  PARAMS="${HOSTNAME} ${API_PORT_UNSEC} ${API_PORT_SEC} ${HOSTNAME} ${RS_PORT_UNSEC} ${RS_PORT_SEC} ${HOSTNAME} ${REC_PORT} ${MEMCACHE}"
+
+  docker run ${ENV} ${FWD} -i --name="${CONTAINER}" -d ${REPO}/${IMAGE}:${TAG} /start-radio-site.sh ${PARAMS}
+  ;;
+
+start-bash)
+  PORTOFFSET=0
+  if [[ $2 != "" ]] ; then
+    PORTOFFSET=$2
+  fi
+
+  HOSTNAME=${MY_HOST_NAME}
+  if [ "$HOSTNAME" == "" ] ; then
+    HOSTNAME=`hostname -f`
+  fi
+
+  API_PORT_UNSEC=$((8080 + $PORTOFFSET))
+  API_PORT_SEC=$((8443 + $PORTOFFSET))
+  RS_PORT_UNSEC=$((8180 + $PORTOFFSET))
+  RS_PORT_SEC=$((8543 + $PORTOFFSET))
+  REC_PORT=$((2082 + $PORTOFFSET))
+
+  FWD_UNSEC="-p ${RS_PORT_UNSEC}:${RS_PORT_UNSEC}"
+  FWD_SEC="-p ${RS_PORT_SEC}:${RS_PORT_SEC}"
+
+
+
+  currentpath=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+#-v ${currentpath}/radio-site:/radio-site
+echo  "${FWD_SEC} ${FWD_UNSEC}"
+  docker run --rm -i -v ${currentpath}/radio-site:/radio-site ${FWD_SEC} ${FWD_UNSEC}  ${LINK} --name="${CONTAINER}" -t ${REPO}/${IMAGE} bash
+  ;;
+
+
+stop)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker stop -t 0
+  docker ps -a | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker rm
+  ;;
+
+
+create-commit)
+  get-radiosite-commit  ${2} ${3}
+  make-radiosite
+  ;;
+
+create-rel)
+  get-radiosite  release/${2}
+  make-radiosite
+  ;;
+
+create-master)
+  get-radiosite master
+  make-radiosite
+  ;;
+  
+create-dev)
+  get-radiosite develop
+  make-radiosite
+  ;;
+
+logs)
+  docker ps | grep "${CONTAINER}" | awk '{print $1}' | xargs -L 1 -r docker logs $3
+  ;;
+
+*)
+  echo "Radio Site container"
+  echo "===================="
+  echo "."
+  echo "Usage:  ./dock <option>"
+  echo "."
+  echo "create-master        - create container using master branch [ env var MY_HOST_KEYSTORE=path to your keystore ]"
+  echo "create-dev           - create container using develop branch [ env var MY_HOST_KEYSTORE=path to your keystore ]"
+  echo "create-rel [branch]  - create container using release branch [ env var MY_HOST_KEYSTORE=path to your keystore ]"
+  echo "create-commit [branch] [sha1] - create container using branch and sha1 [ env var MY_HOST_KEYSTORE=path to your keystore ]"
+  echo "."
+  echo "start [port offset]  - start a container running"
+  echo "stop                 - stop and remove a running container"
+  echo "attach               - attach a bash prompt to running container"
+  echo "."
+  echo "start-bash           - start a container running with bash prompt - DEBUG ONLY"
+  ;;
+esac
+
